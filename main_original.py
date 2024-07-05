@@ -9,15 +9,6 @@ from narration_generator import process_slides, add_audio_to_ppt
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def main(ppt_path, output_dir):
-    # Convert relative paths to absolute paths
-    ppt_path = os.path.abspath(ppt_path)
-    output_dir = os.path.abspath(output_dir)
-
-    # Ensure input PowerPoint file exists
-    if not os.path.isfile(ppt_path):
-        logging.error(f"PowerPoint file not found: {ppt_path}")
-        return None
-
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
     
@@ -26,7 +17,7 @@ def main(ppt_path, output_dir):
     
     if not narrations:
         logging.error("No narrations were generated. Exiting.")
-        return None
+        return
     
     # Generate audio for each narration using multiple threads
     audio_files = []
@@ -41,7 +32,6 @@ def main(ppt_path, output_dir):
     # Add audio files to the PowerPoint
     final_ppt = add_audio_to_ppt(ppt_path, audio_files)
     logging.info(f"Final presentation with audio saved as: {final_ppt}")
-    return final_ppt
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate audio narrations for PowerPoint slides and add them to the presentation")
