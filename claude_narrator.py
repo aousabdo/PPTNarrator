@@ -24,24 +24,25 @@ Now, focus on the current slide. Your goal is to transform the given slide conte
 
 Follow these guidelines to create effective speaker notes:
 
-1. Use a conversational tone that sounds natural when spoken.
-2. Vary your opening phrases for each slide. Avoid starting every slide with phrases like "Now, let's..." or "Moving on to...". Instead, use a variety of transitions that feel natural and fit the content.
-3. Focus on clear explanations of the content without mentioning "Slide X" or "Text Block" prefixes.
-4. Provide detailed descriptions of any figures, charts, or images on the slide.
-5. For code snippets, explain the purpose and functionality of the code in a way that's easy to understand when spoken.
-6. Vary the pacing to emphasize key points.
-7. Incorporate natural pauses using the <break time="Xs" /> syntax, where X is the duration in seconds. For example:
+1. Aim for a slide narration time of about two minutes, unless if the slide is the first slide, then aim for 1 minute or less.
+2. Use a conversational tone that sounds natural when spoken.
+3. Vary your opening phrases for each slide. Avoid starting every slide with phrases like "Now, let's..." or "Moving on to...". Instead, use a variety of transitions that feel natural and fit the content.
+4. Focus on clear explanations of the content without mentioning "Slide X" or "Text Block" prefixes.
+5. Provide detailed, but not too detailed, descriptions of any figures, charts, or images on the slide.
+6. For code snippets, explain the purpose and functionality of the code in a way that's easy to understand when spoken.
+7. Vary the pacing to emphasize key points.
+8. Incorporate natural pauses using the <break time="Xs" /> syntax, where X is the duration in seconds. For example:
    - Use short pauses (0.2-0.5 seconds) between sentences or phrases.
    - Use medium pauses (0.5-1 second) between main ideas.
    - Use longer pauses (1-2 seconds) for transitions between major topics.
-8. To put emphasis on a word or a phrase, use double quotes and caps. For example:
+9. To put emphasis on a word or a phrase, use double quotes and caps. For example:
    - The universe is 13.8 "BILLION" years old
-9. Ensure the narration is engaging and informative, suitable for an educational context.
-10. Expand on the slide content where necessary to provide context or additional information.
-11. Use transitional phrases to connect ideas and maintain flow.
-12. Do not include any prefixes like "Slide X", "Text Block", or mention that you're describing a specific slide.
-13. If this is not the first slide, do not start with "Welcome" or act as if this is the beginning of the presentation. Instead, use appropriate transitions based on the slide number.
-14. If this is the last slide, provide a suitable conclusion to the presentation.
+10. Ensure the narration is engaging and informative, suitable for an educational context.
+11. Expand on the slide content where necessary to provide context or additional information.
+12. Use transitional phrases to connect ideas and maintain flow.
+13. Do not include any prefixes like "Slide X", "Text Block", or mention that you're describing a specific slide.
+14. If this is not the first slide, do not start with "Welcome" or act as if this is the beginning of the presentation. Instead, use appropriate transitions based on the slide number.
+15. If this is the last slide, provide a suitable conclusion to the presentation.
 
 Here is the slide content to work with:
 
@@ -54,7 +55,7 @@ Your task is to provide optimized speaker notes for this slide. Include appropri
     try:
         message = client.messages.create(
             model="claude-3-5-sonnet-20240620",
-            max_tokens=1000,
+            max_tokens=500,
             temperature=0,
             messages=[
                 {
