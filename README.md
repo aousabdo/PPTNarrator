@@ -4,24 +4,30 @@ PPTNarrator is an AI-powered tool that automatically generates audio narrations 
 
 ## Workflow
 
-![Workflow Diagram](workflow.png)
-
 1. Input PowerPoint Presentation
-2. Convert PowerPoint slides to PNG images
+2. Convert PowerPoint slides to high-resolution PNG images
 3. Extract text and generate a summary of the presentation
 4. Generate context-aware narrations for each slide using Claude AI
 5. Convert narrations to speech using ElevenLabs
 6. Embed generated audio narrations back into the PowerPoint
 7. Output final narrated presentation
 
+
+## Workflow Diagram
+
+![PPTNarrator Workflow](workflow.png)
+
+
+
 ## Features
 
-- Converts PowerPoint slides to high-resolution images
+- Converts PowerPoint slides to high-resolution PNG images using LibreOffice
 - Extracts text and speaker notes from presentations
 - Generates a summary of the entire presentation for context
 - Creates context-aware narrations for each slide using Claude AI
 - Converts narrations to speech using ElevenLabs text-to-speech API
 - Embeds generated audio narrations back into the PowerPoint presentation
+- Supports multithreading for efficient audio generation
 
 ## Requirements
 
@@ -33,20 +39,39 @@ PPTNarrator is an AI-powered tool that automatically generates audio narrations 
 ## Installation
 
 1. Clone this repository:
-git clone https://github.com/aousabdo/PPTNarrator.git
-cd PPTNarrator
+   ```
+   git clone https://github.com/aousabdo/PPTNarrator.git
+   cd PPTNarrator
+   ```
+
 2. Install the required dependencies:
-pip install -r requirements.txt
+   ```
+   pip install -r requirements.txt
+   ```
+
 3. Set up environment variables:
-- Copy `.env.example` to `.env`
-- Fill in your API keys and other configuration in the `.env` file
+   - Copy `.env.example` to `.env`
+   - Fill in your API keys and other configuration in the `.env` file
 
 ## Usage
 
-Run the script with: python main.py path/to/your/presentation.pptx output_directory
+Run the script with:
+```
+python main.py path/to/your/presentation.pptx output_directory [options]
+```
+
+Options:
+- `--generate-narrations`: Generate narrations from slides
+- `--generate-audio`: Generate audio from narration files
+- `--insert-audio`: Insert audio into PowerPoint
+
+Example:
+```
+python main.py presentation.pptx output --generate-narrations --generate-audio --insert-audio
+```
 
 This will:
-1. Convert the PowerPoint to images
+1. Convert the PowerPoint to high-resolution PNG images
 2. Generate narrations for each slide
 3. Convert narrations to speech
 4. Create a new PowerPoint file with embedded audio
