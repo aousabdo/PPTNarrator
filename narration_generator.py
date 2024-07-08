@@ -8,8 +8,9 @@ from pptx.util import Inches
 from lxml import etree
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+import re
 
-from claude_narrator import get_narration_from_claude
+from claude_narrator import get_narrations_from_claude
 from claude_narrator import get_summary_from_claude
 
 def ppt_to_png(ppt_path, dpi=300):
@@ -55,8 +56,14 @@ def ppt_to_png(ppt_path, dpi=300):
     print(f"All high-resolution images have been saved to: {output_folder}")
     return output_folder
 
-def generate_narration(image_path, slide_number, total_slides, presentation_summary, output_dir):
-    narration = get_narration_from_claude(image_path, slide_number, total_slides, presentation_summary)
+def generate_narration(image_path, slide_number, total_slides, presentation_summary, previous_slide_content, output_dir):
+    narration = get_narration_from_claude(
+        image_path, 
+        slide_number, 
+        total_slides, 
+        presentation_summary, 
+        previous_slide_content
+    )
     if narration:
         text_output_path = os.path.join(output_dir, f"slide_{slide_number:03d}_narration.txt")
         with open(text_output_path, 'w', encoding='utf-8') as f:
@@ -72,26 +79,40 @@ def process_slides(ppt_path, output_dir):
     # Get the presentation summary first
     presentation_summary = get_presentation_summary(ppt_path, output_dir)
     
-    # Get the base name of the input file (without extension)
-    base_name = os.path.splitext(os.path.basename(ppt_path))[0]
-    
-    # Create a new output folder based on the PPT file name with '_images' tag
-    images_folder = os.path.join(output_dir, f"{base_name}_images")
-    
     # Convert PPT to PNG images
     images_folder = ppt_to_png(ppt_path, dpi=300)
     
     # Get all PNG files in the images folder
     image_paths = sorted([os.path.join(images_folder, f) for f in os.listdir(images_folder) if f.endswith('.png')])
     
-    narrations = []
-    for i, image_path in enumerate(image_paths):
-        slide_number = i + 1
-        total_slides = len(image_paths)
-        text_to_speak = generate_narration(image_path, slide_number, total_slides, presentation_summary, output_dir)
-        output_path = generate_output_path(slide_number, output_dir)
-        narrations.append((text_to_speak, output_path))
-    return narrations
+    narrations = get_narrations_from_claude(image_paths, presentation_summary)
+    
+    if not narrations:
+        logging.error("No narrations were generated. Exiting.")
+        return []
+
+    processed_narrations = []
+    for i, image_path in enumerate(image_paths, 1):
+        slide_key = f"slide_{i}"
+        if slide_key in narrations:
+            full_narration = narrations[slide_key]["narration"]
+            
+            # Remove "Slide #:" prefix if it exists
+            text_to_speak = re.sub(r'^Slide \d+:\s*', '', full_narration.strip())
+            
+            output_path = generate_output_path(i, output_dir)
+            processed_narrations.append((text_to_speak, output_path))
+            
+            # Save full narration (including "Slide #:") as text file
+            text_file_path = os.path.join(output_dir, f"slide_{i:03d}_narration.txt")
+            with open(text_file_path, 'w', encoding='utf-8') as f:
+                f.write(full_narration)
+        else:
+            logging.warning(f"No narration generated for slide {i}")
+    
+    return processed_narrations
+    
+    return processed_narrations
 
 def add_audio_to_ppt(ppt_path, audio_files):
     prs = Presentation(ppt_path)
