@@ -15,7 +15,9 @@ PPTNarrator is an AI-powered tool that automatically generates audio narrations 
 
 ## Workflow Diagram
 
-![PPTNarrator Workflow](workflow.png)
+<p align="center">
+  <img src="workflow.png" alt="PPTNarrator Workflow">
+</p>
 
 
 
