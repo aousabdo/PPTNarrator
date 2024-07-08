@@ -1,104 +1,119 @@
 import os
 import logging
 import base64
+import json
+import re
 import anthropic
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-def get_narration_from_claude(image_path, slide_number, total_slides, presentation_summary):
+def get_narrations_from_claude(image_paths, presentation_summary):
     if not ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    with open(image_path, "rb") as image_file:
-        base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+    all_narrations = {}
+    used_openings = set()
 
-    prompt = f"""You are an AI assistant tasked with creating speaker notes for slide {slide_number} of a {total_slides}-slide presentation, optimized for narration using ElevenLabs AI text-to-speech technology. Your goal is to transform the given slide content into engaging, conversational speaker notes that flow naturally when read aloud.
+    for i, image_path in enumerate(image_paths, 1):
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
-Here's a summary of the entire presentation to provide context:
+        prompt = f"""You are an AI assistant tasked with creating speaker notes for slide {i} of a {len(image_paths)}-slide presentation on Exploratory Data Analysis in Data Science. Your goal is to transform the given slide content into engaging, conversational speaker notes that flow naturally when read aloud, as if you are the presenter speaking directly to the audience.
 
+Here's a summary of the entire presentation to provide overall context:
 {presentation_summary}
 
-Now, focus on the current slide. Your goal is to transform the given slide content into engaging, conversational speaker notes that flow naturally when read aloud, keeping in mind the overall context of the presentation.
+Here is the content for the current slide (slide {i}):
 
-Follow these guidelines to create effective speaker notes:
-
-1. Aim for a slide narration time of about two minutes, unless if the slide is the first slide, then aim for 1 minute or less.
-2. Use a conversational tone that sounds natural when spoken.
-3. Vary your opening phrases for each slide. Avoid starting every slide with phrases like "Now, let's..." or "Moving on to...". Instead, use a variety of transitions that feel natural and fit the content.
-4. Focus on clear explanations of the content without mentioning "Slide X" or "Text Block" prefixes.
-5. Provide detailed, but not too detailed, descriptions of any figures, charts, or images on the slide.
-6. For code snippets, explain the purpose and functionality of the code in a way that's easy to understand when spoken.
-7. Vary the pacing to emphasize key points.
-8. Incorporate natural pauses using the <break time="Xs" /> syntax, where X is the duration in seconds. For example:
-   - Use short pauses (0.2-0.5 seconds) between sentences or phrases.
-   - Use medium pauses (0.5-1 second) between main ideas.
-   - Use longer pauses (1-2 seconds) for transitions between major topics.
-9. To put emphasis on a word or a phrase, use double quotes and caps. For example:
-   - The universe is 13.8 "BILLION" years old
-10. Ensure the narration is engaging and informative, suitable for an educational context.
-11. Expand on the slide content where necessary to provide context or additional information.
-12. Use transitional phrases to connect ideas and maintain flow.
-13. Do not include any prefixes like "Slide X", "Text Block", or mention that you're describing a specific slide.
-14. If this is not the first slide, do not start with "Welcome" or act as if this is the beginning of the presentation. Instead, use appropriate transitions based on the slide number.
-15. If this is the last slide, provide a suitable conclusion to the presentation.
-
-Here is the slide content to work with:
-
-<slide_content>
 [An image of the slide content is attached]
-</slide_content>
 
-Your task is to provide optimized speaker notes for this slide. Include appropriate breaks using the <break time="Xs" /> syntax throughout your notes. Remember to use a conversational tone, explain the content clearly, and incorporate pauses and emphasis as needed to create engaging and natural-sounding narration that flows well with the rest of the presentation."""
+Your task is to provide optimized speaker notes for this specific slide, written from the perspective of the presenter. The narration should directly correspond to the content visible in the image.
 
-    try:
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=500,
-            temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": base64_image
+Follow these guidelines:
+
+1. The narration should be in the first person, using "I" and "we" naturally.
+2. Do not mention or introduce any names that appear on the slides.
+3. Aim for about one to two minutes of narration for this slide.
+4. Focus on clear, concise explanations of the specific content shown on the slide.
+5. Describe any visible figures, charts, or images on the slide without redundancy.
+6. Use the <break time="Xs" /> syntax for pauses, where X is the duration in seconds.
+7. Use double quotes and caps for emphasis. Example: This finding is "CRUCIAL" for our understanding.
+8. Ensure the narration is engaging and informative, suitable for an educational context.
+9. Create a unique opening for this slide. Do not start with "Welcome", "Now, let's", or any phrase you've used for previous slides.
+10. If this is the last slide, provide a suitable conclusion that ties back to the overall presentation themes.
+11. Be concise and avoid unnecessary repetition. Each sentence should provide new information or insight.
+12. If you must repeat a point for emphasis, do so intentionally and sparingly, using different phrasing.
+13. Minimize the use of filler phrases like "Alright," "Let's dive into," etc. Start sentences with varied, engaging openings.
+14. Ensure that your narration follows a logical flow, with each point building on the previous one.
+15. Tailor your language to the complexity of the content. Use simpler explanations for basic concepts and more technical language for advanced topics.
+
+Format your response as follows:
+
+[START_NARRATION]
+(Your narration here, directly related to the slide's specific content)
+[END_NARRATION]
+"""
+
+        try:
+            message = client.messages.create(
+                model="claude-3-5-sonnet-20240620",
+                max_tokens=1000,
+                temperature=0,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": base64_image
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
                             }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }
-            ]
-        )
-        
-        # Extract the text content from the ContentBlock
-        if message.content and len(message.content) > 0:
-            content_block = message.content[0]
-            if hasattr(content_block, 'text'):
-                return content_block.text
+                        ]
+                    }
+                ]
+            )
+            
+            if message.content and len(message.content) > 0:
+                content = message.content[0].text
+                start_tag = '[START_NARRATION]'
+                end_tag = '[END_NARRATION]'
+                if start_tag in content and end_tag in content:
+                    narration = content.split(start_tag)[1].split(end_tag)[0].strip()
+                    
+                    # Check for repetitive openings
+                    first_sentence = narration.split('.')[0]
+                    if any(first_sentence.startswith(opening) for opening in used_openings):
+                        narration = "For this slide, " + narration
+                    else:
+                        used_openings.add(first_sentence)
+                    
+                    all_narrations[f"slide_{i}"] = {"narration": narration}
+                else:
+                    logging.warning(f"No properly formatted narration generated for slide {i}")
             else:
-                return str(content_block)
-        else:
-            return "No content generated."
-    except Exception as e:
-        logging.error(f"Error calling Anthropic API: {str(e)}")
-        return None
+                logging.warning(f"No content generated for slide {i}")
+        except Exception as e:
+            logging.error(f"Error calling Anthropic API for slide {i}: {str(e)}")
+
+    return all_narrations
 
 def get_summary_from_claude(full_text):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     prompt = f"""You are an AI assistant tasked with summarizing a presentation. Here's the full text of the presentation:
 
-{full_text}
+    {full_text}
 
-Please provide a concise summary of the main points and overall structure of this presentation. This summary will be used to provide context for narrating individual slides."""
+    Please provide a concise summary of the main points and overall structure of this presentation. This summary will be used to provide context for narrating individual slides."""
 
     try:
         message = client.messages.create(
@@ -123,9 +138,10 @@ Please provide a concise summary of the main points and overall structure of thi
 
 # Example usage
 if __name__ == "__main__":
-    image_path = "path/to/your/slide/image.png"
-    narration = get_narration_from_claude(image_path)
-    if narration:
-        print(narration)
+    image_paths = ["path/to/slide1.png", "path/to/slide2.png", ...]  # Add all slide image paths
+    presentation_summary = "This presentation covers..."  # Add your presentation summary
+    narrations = get_narrations_from_claude(image_paths, presentation_summary)
+    if narrations:
+        print(json.dumps(narrations, indent=2))
     else:
-        print("Failed to generate narration.")
+        print("Failed to generate narrations.")
