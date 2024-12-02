@@ -1,0 +1,736 @@
+Project Path: /Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator
+
+Source Tree:
+
+```
+PPTNarrator
+├── pdf_reader.py
+├── config.py
+├── requirements.txt
+├── narration_generator.py
+├── claude_narrator.py
+├── text_to_speech.py
+├── README.md
+├── main_original.py
+├── main.py
+└── workflow.png
+
+```
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/pdf_reader.py`:
+
+```````py
+import PyPDF2
+import logging
+
+def read_pdf_slides(pdf_path):
+    slides = []
+    try:
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            for page in reader.pages:
+                slides.append(page.extract_text())
+        logging.info(f"Successfully read {len(slides)} slides from {pdf_path}")
+    except Exception as e:
+        logging.error(f"Error reading PDF {pdf_path}: {str(e)}")
+    return slides
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/config.py`:
+
+```````py
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1024))
+XI_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+VOICE_ID = os.getenv("VOICE_ID")
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", 5))
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# Validate that required environment variables are set
+if not XI_API_KEY:
+    raise ValueError("ELEVENLABS_API_KEY is not set in the .env file")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY is not set in the .env file")
+if not VOICE_ID:
+    raise ValueError("VOICE_ID is not set in the .env file")
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/requirements.txt`:
+
+```````txt
+python-pptx==0.6.21
+anthropic==0.3.11
+requests==2.31.0
+tenacity==8.2.3
+python-dotenv==1.0.0
+pdf2image==1.16.3
+lxml==4.9.3
+Pillow==10.0.0
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/narration_generator.py`:
+
+```````py
+import os
+import json
+import logging
+from pdf2image import convert_from_path
+from pptx import Presentation
+import subprocess
+from pptx.util import Inches
+from lxml import etree
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+import re
+
+from claude_narrator import get_narrations_from_claude
+from claude_narrator import get_summary_from_claude
+
+def ppt_to_png(ppt_path, dpi=300):
+    # Get the base name of the input file (without extension)
+    base_name = os.path.splitext(os.path.basename(ppt_path))[0]
+    
+    # Create a new output folder based on the PPT file name with '_images' tag
+    output_folder = os.path.join(os.path.dirname(ppt_path), f"{base_name}_images")
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Construct the LibreOffice command to convert PPT to PDF
+    libreoffice_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    pdf_path = os.path.join(output_folder, f"{base_name}.pdf")
+    command = [
+        libreoffice_path,
+        "--headless",
+        "--convert-to", "pdf",
+        "--outdir", output_folder,
+        ppt_path
+    ]
+
+    # Run the command to convert PPT to PDF
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"Converted {ppt_path} to PDF")
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred during conversion to PDF: {e}")
+        print(f"Error output: {e.output}")
+        return
+
+    # Convert PDF to high-resolution PNG
+    try:
+        images = convert_from_path(pdf_path, dpi=dpi)
+        for i, image in enumerate(images):
+            image.save(os.path.join(output_folder, f"slide_{i+1:03d}.png"), "PNG")
+        print(f"Converted PDF to {len(images)} high-resolution PNG images")
+    except Exception as e:
+        print(f"An error occurred during conversion from PDF to PNG: {e}")
+
+    # Clean up the temporary PDF file
+    os.remove(pdf_path)
+
+    print(f"All high-resolution images have been saved to: {output_folder}")
+    return output_folder
+
+def generate_narration(image_path, slide_number, total_slides, presentation_summary, previous_slide_content, output_dir):
+    narration = get_narration_from_claude(
+        image_path, 
+        slide_number, 
+        total_slides, 
+        presentation_summary, 
+        previous_slide_content
+    )
+    if narration:
+        text_output_path = os.path.join(output_dir, f"slide_{slide_number:03d}_narration.txt")
+        with open(text_output_path, 'w', encoding='utf-8') as f:
+            f.write(narration)
+        return narration
+    else:
+        return f"Unable to generate narration for slide {slide_number}."
+
+def generate_output_path(slide_number, output_dir):
+    return os.path.join(output_dir, f"slide_{slide_number:03d}.mp3")
+
+def process_slides(ppt_path, output_dir):
+    # Get the presentation summary first
+    presentation_summary = get_presentation_summary(ppt_path, output_dir)
+    
+    # Convert PPT to PNG images
+    images_folder = ppt_to_png(ppt_path, dpi=300)
+    
+    # Get all PNG files in the images folder
+    image_paths = sorted([os.path.join(images_folder, f) for f in os.listdir(images_folder) if f.endswith('.png')])
+    
+    narrations = get_narrations_from_claude(image_paths, presentation_summary)
+    
+    if not narrations:
+        logging.error("No narrations were generated. Exiting.")
+        return []
+
+    processed_narrations = []
+    for i, image_path in enumerate(image_paths, 1):
+        slide_key = f"slide_{i}"
+        if slide_key in narrations:
+            full_narration = narrations[slide_key]["narration"]
+            
+            # Remove "Slide #:" prefix if it exists
+            text_to_speak = re.sub(r'^Slide \d+:\s*', '', full_narration.strip())
+            
+            output_path = generate_output_path(i, output_dir)
+            processed_narrations.append((text_to_speak, output_path))
+            
+            # Save full narration (including "Slide #:") as text file
+            text_file_path = os.path.join(output_dir, f"slide_{i:03d}_narration.txt")
+            with open(text_file_path, 'w', encoding='utf-8') as f:
+                f.write(full_narration)
+        else:
+            logging.warning(f"No narration generated for slide {i}")
+    
+    return processed_narrations
+    
+    return processed_narrations
+
+def add_audio_to_ppt(ppt_path, audio_files):
+    prs = Presentation(ppt_path)
+    
+    for i, slide in enumerate(prs.slides):
+        if i < len(audio_files):
+            audio_path = audio_files[i]
+            left = top = Inches(0)
+            height = width = Inches(1)  # Small, but not invisible
+            
+            # Add the audio file to the slide
+            audio = slide.shapes.add_movie(audio_path, left, top, width, height)
+            
+            # Get the XML element
+            element = audio.element
+            
+            # Define namespaces
+            namespaces = {
+                'a': "http://schemas.openxmlformats.org/drawingml/2006/main",
+                'p': "http://schemas.openxmlformats.org/presentationml/2006/main",
+                'r': "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                'p14': "http://schemas.microsoft.com/office/powerpoint/2010/main"
+            }
+
+            # Find or create nvPr element
+            nvPr = element.find('.//p:nvPr', namespaces)
+            if nvPr is None:
+                nvPicPr = element.find('.//p:nvPicPr', namespaces)
+                nvPr = etree.SubElement(nvPicPr, '{%s}nvPr' % namespaces['p'])
+
+            # Add audioFile element
+            audioFile = nvPr.find('a:audioFile', namespaces)
+            if audioFile is None:
+                audioFile = etree.SubElement(nvPr, '{%s}audioFile' % namespaces['a'])
+            audioFile.set('embed', 'rId1')
+            audioFile.set('name', '')
+
+            # Add extLst element
+            extLst = nvPr.find('p:extLst', namespaces)
+            if extLst is None:
+                extLst = etree.SubElement(nvPr, '{%s}extLst' % namespaces['p'])
+
+            # Add ext element
+            ext = extLst.find('p:ext', namespaces)
+            if ext is None:
+                ext = etree.SubElement(extLst, '{%s}ext' % namespaces['p'])
+            ext.set('uri', '{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}')
+
+            # Add media element
+            media = ext.find('p14:media', namespaces)
+            if media is None:
+                media = etree.SubElement(ext, '{%s}media' % namespaces['p14'])
+
+            # Add trim element
+            trim = media.find('p14:trim', namespaces)
+            if trim is None:
+                trim = etree.SubElement(media, '{%s}trim' % namespaces['p14'])
+            trim.set('st', '0')
+
+            # Add play element to set autoplay
+            play = media.find('p14:play', namespaces)
+            if play is None:
+                play = etree.SubElement(media, '{%s}play' % namespaces['p14'])
+            play.set('auto', '1')
+
+    # Save the modified presentation
+    output_path = os.path.join(os.path.dirname(ppt_path), os.path.basename(ppt_path).replace('.pptx', '_with_audio.pptx'))
+    prs.save(output_path)
+    print(f"Presentation with audio saved as: {output_path}")
+    return output_path
+
+def extract_presentation_text(ppt_path):
+    prs = Presentation(ppt_path)
+    full_text = []
+    for slide_number, slide in enumerate(prs.slides, 1):
+        slide_text = [f"Slide {slide_number}:"]
+        for shape in slide.shapes:
+            if hasattr(shape, 'text'):
+                slide_text.append(shape.text)
+        
+        # Extract speaker notes
+        notes_slide = slide.notes_slide
+        if notes_slide and notes_slide.notes_text_frame:
+            notes_text = notes_slide.notes_text_frame.text
+            if notes_text:
+                slide_text.append(f"Speaker Notes: {notes_text}")
+        
+        full_text.append('\n'.join(slide_text))
+    
+    return '\n\n'.join(full_text)
+
+def get_presentation_summary(ppt_path, output_dir):
+    # Get the base name of the presentation file (without extension)
+    ppt_base_name = os.path.splitext(os.path.basename(ppt_path))[0]
+    
+    # Create a more descriptive summary file name
+    summary_file = os.path.join(output_dir, f"{ppt_base_name}_presentation_summary.json")
+    
+    # Check if summary already exists
+    if os.path.exists(summary_file):
+        try:
+            with open(summary_file, 'r') as f:
+                summary = json.load(f)
+            if summary:  # Check if the loaded summary is not empty
+                return summary
+            else:
+                logging.warning(f"Existing summary file {summary_file} is empty. Generating new summary.")
+        except json.JSONDecodeError:
+            logging.warning(f"Error decoding existing summary file {summary_file}. Generating new summary.")
+    else:
+        logging.info(f"Summary file {summary_file} not found. Generating new summary.")
+    
+    # Generate new summary
+    full_text = extract_presentation_text(ppt_path)
+    summary = get_summary_from_claude(full_text)
+    
+    # Save summary
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f)
+    
+    return summary
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/claude_narrator.py`:
+
+```````py
+import os
+import logging
+import base64
+import json
+import re
+import anthropic
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+def get_narrations_from_claude(image_paths, presentation_summary):
+    if not ANTHROPIC_API_KEY:
+        raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    all_narrations = {}
+    used_openings = set()
+
+    for i, image_path in enumerate(image_paths, 1):
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        prompt = f"""You are an AI assistant tasked with creating speaker notes for slide {i} of a {len(image_paths)}-slide presentation on Exploratory Data Analysis in Data Science. Your goal is to transform the given slide content into engaging, conversational speaker notes that flow naturally when read aloud, as if you are the presenter speaking directly to the audience.
+
+Here's a summary of the entire presentation to provide overall context:
+{presentation_summary}
+
+Here is the content for the current slide (slide {i}):
+
+[An image of the slide content is attached]
+
+Your task is to provide optimized speaker notes for this specific slide, written from the perspective of the presenter. The narration should directly correspond to the content visible in the image.
+
+Follow these guidelines:
+
+1. The narration should be in the first person, using "I" and "we" naturally.
+2. Do not mention or introduce any names that appear on the slides.
+3. Aim for about one to two minutes of narration for this slide.
+4. Focus on clear, concise explanations of the specific content shown on the slide.
+5. Describe any visible figures, charts, or images on the slide without redundancy.
+6. Use the <break time="Xs" /> syntax for pauses, where X is the duration in seconds.
+7. Use double quotes and caps for emphasis. Example: This finding is "CRUCIAL" for our understanding.
+8. Ensure the narration is engaging and informative, suitable for an educational context.
+9. Create a unique opening for this slide. Do not start with "Welcome", "Now, let's", or any phrase you've used for previous slides.
+10. If this is the last slide, provide a suitable conclusion that ties back to the overall presentation themes.
+11. Be concise and avoid unnecessary repetition. Each sentence should provide new information or insight.
+12. If you must repeat a point for emphasis, do so intentionally and sparingly, using different phrasing.
+13. Minimize the use of filler phrases like "Alright," "Let's dive into," etc. Start sentences with varied, engaging openings.
+14. Ensure that your narration follows a logical flow, with each point building on the previous one.
+15. Tailor your language to the complexity of the content. Use simpler explanations for basic concepts and more technical language for advanced topics.
+
+Format your response as follows:
+
+[START_NARRATION]
+(Your narration here, directly related to the slide's specific content)
+[END_NARRATION]
+"""
+
+        try:
+            message = client.messages.create(
+                model="claude-3-5-sonnet-20240620",
+                max_tokens=1000,
+                temperature=0,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": base64_image
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ]
+            )
+            
+            if message.content and len(message.content) > 0:
+                content = message.content[0].text
+                start_tag = '[START_NARRATION]'
+                end_tag = '[END_NARRATION]'
+                if start_tag in content and end_tag in content:
+                    narration = content.split(start_tag)[1].split(end_tag)[0].strip()
+                    
+                    # Check for repetitive openings
+                    first_sentence = narration.split('.')[0]
+                    if any(first_sentence.startswith(opening) for opening in used_openings):
+                        narration = "For this slide, " + narration
+                    else:
+                        used_openings.add(first_sentence)
+                    
+                    all_narrations[f"slide_{i}"] = {"narration": narration}
+                else:
+                    logging.warning(f"No properly formatted narration generated for slide {i}")
+            else:
+                logging.warning(f"No content generated for slide {i}")
+        except Exception as e:
+            logging.error(f"Error calling Anthropic API for slide {i}: {str(e)}")
+
+    return all_narrations
+
+def get_summary_from_claude(full_text):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    prompt = f"""You are an AI assistant tasked with summarizing a presentation. Here's the full text of the presentation:
+
+    {full_text}
+
+    Please provide a concise summary of the main points and overall structure of this presentation. This summary will be used to provide context for narrating individual slides."""
+
+    try:
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=500,
+            temperature=0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        
+        if message.content and len(message.content) > 0:
+            return message.content[0].text
+        else:
+            return "Unable to generate summary."
+    except Exception as e:
+        logging.error(f"Error calling Anthropic API for summary: {str(e)}")
+        return None
+
+# Example usage
+if __name__ == "__main__":
+    image_paths = ["path/to/slide1.png", "path/to/slide2.png", ...]  # Add all slide image paths
+    presentation_summary = "This presentation covers..."  # Add your presentation summary
+    narrations = get_narrations_from_claude(image_paths, presentation_summary)
+    if narrations:
+        print(json.dumps(narrations, indent=2))
+    else:
+        print("Failed to generate narrations.")
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/text_to_speech.py`:
+
+```````py
+import requests
+import logging
+from config import CHUNK_SIZE, XI_API_KEY, VOICE_ID
+
+def text_to_speech(text_to_speak, output_path):
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}/stream"
+    
+    headers = {
+        "Accept": "application/json",
+        "xi-api-key": XI_API_KEY
+    }
+    
+    data = {
+        "text": text_to_speak,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.8,
+            "style": 0.0,
+            "use_speaker_boost": True
+        }
+    }
+    
+    try:
+        response = requests.post(tts_url, headers=headers, json=data, stream=True)
+        response.raise_for_status()
+        
+        with open(output_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                f.write(chunk)
+        logging.info(f"Audio stream saved successfully to {output_path}")
+    except requests.RequestException as e:
+        logging.error(f"Error in text_to_speech for {output_path}: {str(e)}")
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/README.md`:
+
+```````md
+# PPTNarrator
+
+PPTNarrator is an AI-powered tool that automatically generates audio narrations for PowerPoint presentations. It leverages Claude AI for context-aware text generation and ElevenLabs for high-quality text-to-speech conversion.
+
+## Workflow
+
+1. Input PowerPoint Presentation
+2. Convert PowerPoint slides to high-resolution PNG images
+3. Extract text and generate a summary of the presentation
+4. Generate context-aware narrations for each slide using Claude AI
+5. Convert narrations to speech using ElevenLabs
+6. Embed generated audio narrations back into the PowerPoint
+7. Output final narrated presentation
+
+
+## Workflow Diagram
+
+<p align="center">
+  <img src="workflow.png" alt="PPTNarrator Workflow">
+</p>
+
+
+
+## Features
+
+- Converts PowerPoint slides to high-resolution PNG images using LibreOffice
+- Extracts text and speaker notes from presentations
+- Generates a summary of the entire presentation for context
+- Creates context-aware narrations for each slide using Claude AI
+- Converts narrations to speech using ElevenLabs text-to-speech API
+- Embeds generated audio narrations back into the PowerPoint presentation
+- Supports multithreading for efficient audio generation
+
+## Requirements
+
+- Python 3.7+
+- LibreOffice (for PowerPoint to PDF conversion)
+- Anthropic API key (for Claude AI)
+- ElevenLabs API key
+
+## Installation
+
+1. Clone this repository:
+   ```
+   git clone https://github.com/aousabdo/PPTNarrator.git
+   cd PPTNarrator
+   ```
+
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. Set up environment variables:
+   - Copy `.env.example` to `.env`
+   - Fill in your API keys and other configuration in the `.env` file
+
+## Usage
+
+Run the script with:
+```
+python main.py path/to/your/presentation.pptx output_directory [options]
+```
+
+Options:
+- `--generate-narrations`: Generate narrations from slides
+- `--generate-audio`: Generate audio from narration files
+- `--insert-audio`: Insert audio into PowerPoint
+
+Example:
+```
+python main.py presentation.pptx output --generate-narrations --generate-audio --insert-audio
+```
+
+This will:
+1. Convert the PowerPoint to high-resolution PNG images
+2. Generate narrations for each slide
+3. Convert narrations to speech
+4. Create a new PowerPoint file with embedded audio
+
+The final presentation will be saved in the same directory as the original, with "_with_audio" appended to the filename.
+
+## Configuration
+
+You can adjust the following settings in the `.env` file:
+
+- `ELEVENLABS_API_KEY`: Your ElevenLabs API key
+- `ANTHROPIC_API_KEY`: Your Anthropic API key
+- `VOICE_ID`: The ID of the ElevenLabs voice to use
+- `CHUNK_SIZE`: Chunk size for audio processing (default: 1024)
+- `MAX_WORKERS`: Maximum number of concurrent workers for audio generation (default: 5)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/main_original.py`:
+
+```````py
+import argparse
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from config import MAX_WORKERS
+from text_to_speech import text_to_speech
+from narration_generator import process_slides, add_audio_to_ppt
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def main(ppt_path, output_dir):
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate narrations and output paths
+    narrations = process_slides(ppt_path, output_dir)
+    
+    if not narrations:
+        logging.error("No narrations were generated. Exiting.")
+        return
+    
+    # Generate audio for each narration using multiple threads
+    audio_files = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(text_to_speech, text, path) for text, path in narrations]
+        for future in futures:
+            future.result()  # This will raise any exceptions that occurred during execution
+    
+    # Collect paths of generated audio files
+    audio_files = [path for _, path in narrations]
+    
+    # Add audio files to the PowerPoint
+    final_ppt = add_audio_to_ppt(ppt_path, audio_files)
+    logging.info(f"Final presentation with audio saved as: {final_ppt}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate audio narrations for PowerPoint slides and add them to the presentation")
+    parser.add_argument("ppt_path", help="Path to the PowerPoint file")
+    parser.add_argument("output_dir", help="Directory to save the generated audio files")
+    args = parser.parse_args()
+
+    main(args.ppt_path, args.output_dir)
+```````
+
+`/Users/aousabdo/Library/CloudStorage/OneDrive-ASETPartnersCorp/laptop/AI/PPTNarrator/main.py`:
+
+```````py
+import argparse
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from config import MAX_WORKERS
+from text_to_speech import text_to_speech
+from narration_generator import process_slides, add_audio_to_ppt
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def generate_narrations(ppt_path, output_dir):
+    # Generate narrations and save as text files
+    narrations = process_slides(ppt_path, output_dir)
+    if not narrations:
+        logging.error("No narrations were generated. Exiting.")
+        return False
+    
+    logging.info(f"Narrations generated and saved in {output_dir}")
+    return True
+
+def generate_audio(output_dir):
+    # Read edited narration files and generate audio
+    narration_files = sorted([f for f in os.listdir(output_dir) if f.endswith('_narration.txt')])
+    audio_files = []
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        for file in narration_files:
+            with open(os.path.join(output_dir, file), 'r') as f:
+                text = f.read()
+            audio_path = os.path.join(output_dir, file.replace('_narration.txt', '.mp3'))
+            executor.submit(text_to_speech, text, audio_path)
+            audio_files.append(audio_path)
+
+    logging.info(f"Audio files generated in {output_dir}")
+    return audio_files
+
+def insert_audio(ppt_path, audio_files):
+    # Sort audio files to ensure correct order
+    sorted_audio_files = sorted(audio_files, key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+    # Add audio files to the PowerPoint
+    final_ppt = add_audio_to_ppt(ppt_path, sorted_audio_files)
+    logging.info(f"Final presentation with audio saved as: {final_ppt}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate narrations for PowerPoint slides")
+    parser.add_argument("ppt_path", help="Path to the PowerPoint file")
+    parser.add_argument("output_dir", help="Directory to save the generated files")
+    parser.add_argument("--generate-narrations", action="store_true", help="Generate narrations from slides")
+    parser.add_argument("--generate-audio", action="store_true", help="Generate audio from narration files")
+    parser.add_argument("--insert-audio", action="store_true", help="Insert audio into PowerPoint")
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    if args.generate_narrations:
+        if not generate_narrations(args.ppt_path, args.output_dir):
+            return
+
+    if args.generate_audio:
+        audio_files = generate_audio(args.output_dir)
+        if not audio_files:
+            logging.error("No audio files were generated. Exiting.")
+            return
+
+    if args.insert_audio:
+        audio_files = sorted([os.path.join(args.output_dir, f) for f in os.listdir(args.output_dir) if f.endswith('.mp3')],
+                             key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+        if not audio_files:
+            logging.error("No audio files found. Exiting.")
+            return
+        insert_audio(args.ppt_path, audio_files)
+
+if __name__ == "__main__":
+    main()
+```````

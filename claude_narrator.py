@@ -58,7 +58,7 @@ Format your response as follows:
 
         try:
             message = client.messages.create(
-                model="claude-3-5-sonnet-20240620",
+                model="claude-3-5-sonnet-latest",
                 max_tokens=1000,
                 temperature=0,
                 messages=[
@@ -117,7 +117,7 @@ def get_summary_from_claude(full_text):
 
     try:
         message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
+            model="claude-3-5-sonnet-latest",
             max_tokens=500,
             temperature=0,
             messages=[
